@@ -1,6 +1,6 @@
 // ⚠️ 部署 Apps Script 之後，將 Web App 網址貼喺度
 window.CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/XXXXXXXXXXXX/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbwxLFIE47v1Pi14qrX-tovsnWQTVddolGAhUinI6nUoS1Fv0aLFM5zPx1LjckRbVFVFQA/exec',
 
   // 人臉比對門檻：越細越嚴格（0.40 嚴 ~ 0.55 鬆），建議 0.45
   MATCH_THRESHOLD: 0.45,
