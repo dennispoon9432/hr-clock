@@ -17,7 +17,7 @@ async function login(pw) {
   initReport();
 }
 $('#loginBtn').onclick = () => login($('#pw').value).catch(e => toast(e.message, 'bad'));
-$('#pw').onkeydown = e => e.key === 'Enter' && $('#loginBtn').click();
+$('#pw').onkeydown = e => { if (e.key === 'Enter') $('#loginBtn').click(); };
 $('#logout').onclick = () => { try { sessionStorage.removeItem('hr_pw'); } catch {} location.reload(); };
 try { const p = sessionStorage.getItem('hr_pw'); if (p) login(p).catch(() => {}); } catch {}
 
@@ -41,7 +41,7 @@ function closeModal() {
   const v = $('#modalBody video'); if (v) Face.stopCamera(v);
   $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = '';
 }
-$('#modal').onclick = e => e.target.id === 'modal' && closeModal();
+$('#modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
 
 /* ===== 分店 ===== */
 function renderShops() {
@@ -99,12 +99,32 @@ async function enroll(id) {
     <div class="dots">${'<span></span>'.repeat(SAMPLES)}</div>
     <p id="eMsg" style="text-align:center">載入中…</p>
     <p class="muted" style="text-align:center">望住鏡頭，慢慢左右輕輕轉吓頭。光線要充足，唔好戴口罩/太陽眼鏡。</p>
-    <div class="row" style="justify-content:center"><button class="ghost" onclick="closeModal()">取消</button></div></div>`);
+    <label>或者上載相片（可以揀幾張，正面清楚，每張得一個人）</label>
+    <input type="file" id="ePhotos" accept="image/*" multiple>
+    <div class="row" style="justify-content:center;margin-top:12px"><button class="ghost" onclick="closeModal()">取消</button></div></div>`);
   const v = $('#eVideo');
-  try { await Face.load(); await Face.startCamera(v); } catch (e) { $('#eMsg').textContent = '❌ ' + e.message; return; }
+  let usePhotos = false;
+  $('#ePhotos').onchange = async e => {
+    usePhotos = true; Face.stopCamera(v);
+    const files = [...e.target.files]; const faces = []; let bad = 0;
+    $('#eMsg').textContent = `分析緊 ${files.length} 張相…`;
+    await Face.load();
+    for (const f of files) {
+      const img = await faceapi.bufferToImage(f);
+      const r = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
+        .withFaceLandmarks().withFaceDescriptor().catch(() => null);
+      if (r) faces.push(Array.from(r.descriptor).map(x => Math.round(x * 1e4) / 1e4)); else bad++;
+    }
+    if (!faces.length) { $('#eMsg').textContent = '❌ 張張相都搵唔到面，請換清楚啲嘅正面相'; return; }
+    $('#eMsg').textContent = `儲存緊 ${faces.length} 張${bad ? `（${bad} 張搵唔到面，已略過）` : ''}…`;
+    try { await A('saveFace', { staff_id: id, face: faces }); toast(`${s.name} 樣貌登記完成（${faces.length} 張相）`, 'ok'); closeModal(); reload(); }
+    catch (err) { $('#eMsg').textContent = '❌ ' + err.message; }
+  };
+  try { await Face.load(); if (!usePhotos) await Face.startCamera(v); } catch (e) { $('#eMsg').textContent = '❌ 開唔到鏡頭：' + e.message + '（可以改用上載相片）'; return; }
+  if (usePhotos) return;
   const got = [];
   $('#eMsg').textContent = '影緊…';
-  while (got.length < SAMPLES && $('#eVideo') === v) {
+  while (got.length < SAMPLES && $('#eVideo') === v && !usePhotos) {
     const r = await Face.describe(v).catch(() => null);
     if (r && r.detection.score > 0.7) {
       const d = Array.from(r.descriptor);
@@ -116,7 +136,7 @@ async function enroll(id) {
     } else if ($('#eMsg')) $('#eMsg').textContent = r ? '請行近少少 / 光啲' : '搵唔到面…';
     await new Promise(res => setTimeout(res, 500));
   }
-  if ($('#eVideo') !== v) return; // 已取消
+  if ($('#eVideo') !== v || usePhotos) return; // 已取消 / 改用相片
   Face.stopCamera(v);
   $('#eMsg').textContent = '儲存緊…';
   try { await A('saveFace', { staff_id: id, face: got }); toast(`${s.name} 樣貌登記完成`, 'ok'); closeModal(); reload(); }
