@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>員工打卡</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
+<script src="js/config.js"></script>
+<script src="js/common.js"></script>
+</head>
+<body class="kiosk">
+<div class="kiosk-wrap">
+  <div class="kiosk-top">
+    <div class="shop" id="shopName">—</div>
+    <div><div class="clock" id="clock">--:--</div><div class="date" id="date"></div></div>
+  </div>
+  <div class="cam">
+    <video id="video" playsinline muted></video>
+    <div class="ring" id="ring"></div>
+  </div>
+  <div>
+    <div class="status" id="status">載入中…</div>
+    <div class="kiosk-foot"><span id="netInfo"></span><span id="staffInfo"></span></div>
+  </div>
+</div>
+
+<!-- 首次設定 -->
+<div class="overlay hidden" id="setup">
+  <div class="confirm" style="text-align:left">
+    <h2 style="font-size:28px">設定呢部平板</h2>
+    <p class="muted">揀返呢部平板擺喺邊間分店（只需做一次）</p>
+    <label>分店</label><select id="setupShop"><option>載入中…</option></select>
+    <label>分店 PIN</label><input id="setupPin" type="password" inputmode="numeric">
+    <div style="margin-top:18px"><button id="setupBtn" style="width:100%;padding:16px">確定</button></div>
+  </div>
+</div>
+
+<!-- 確認打卡 -->
+<div class="overlay hidden" id="confirm">
+  <div class="confirm">
+    <div class="muted">你好</div>
+    <h2 id="cName"></h2>
+    <div class="muted" id="cId"></div>
+    <div class="btns">
+      <button class="btn-in" data-type="IN">上班</button>
+      <button class="btn-out" data-type="OUT">下班</button>
+    </div>
+    <div style="margin-top:16px"><button class="ghost" id="cCancel">唔係我</button></div>
+    <div class="countdown"><div id="cBar"></div></div>
+  </div>
+</div>
+
+<!-- 完成 -->
+<div class="overlay hidden" id="done">
+  <div class="confirm">
+    <div class="done" id="dIcon">✅</div>
+    <h2 id="dTitle"></h2>
+    <div style="font-size:22px" id="dSub"></div>
+  </div>
+</div>
+
+<script>
+const video = $('#video');
+let cfg = store.get('kiosk_cfg');
+let staff = store.get('kiosk_staff', []);
+let paused = true, streak = { id: null, n: 0 }, unknown = 0, cooldown = {}, current = null, confirmTimer = null;
+
+/* ---- 時鐘 ---- */
+function tickClock() {
+  const d = new Date();
+  $('#clock').textContent = fmtTime(d) + ':' + pad(d.getSeconds());
+  $('#date').textContent = d.toLocaleDateString('zh-HK', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+}
+setInterval(tickClock, 1000); tickClock();
+
+/* ---- 首次設定 ---- */
+async function showSetup() {
+  $('#setup').classList.remove('hidden');
+  try {
+    const shops = await api('shops');
+    $('#setupShop').innerHTML = shops.map(s => `<option value="${esc(s.shop_id)}">${esc(s.name)} (${esc(s.shop_id)})</option>`).join('');
+  } catch (e) { toast('連唔到伺服器：' + e.message, 'bad'); }
+}
+$('#setupBtn').onclick = async () => {
+  const sel = $('#setupShop');
+  const c = { shop_id: sel.value, pin: $('#setupPin').value, shop_name: sel.selectedOptions[0]?.text.replace(/\s*\(.*\)$/, '') };
+  try {
+    $('#setupBtn').disabled = true;
+    const data = await api('kioskData', c);
+    cfg = c; store.set('kiosk_cfg', c);
+    staff = data.staff; store.set('kiosk_staff', staff);
+    $('#setup').classList.add('hidden');
+    start();
+  } catch (e) { toast(e.message, 'bad'); }
+  finally { $('#setupBtn').disabled = false; }
+};
+
+// 喺分店名連按 5 下可以重設
+let taps = 0, tapT;
+$('#shopName').onclick = () => {
+  taps++; clearTimeout(tapT); tapT = setTimeout(() => taps = 0, 1500);
+  if (taps >= 5) {
+    taps = 0;
+    const p = prompt('輸入分店 PIN 重設平板');
+    if (p && cfg && p === cfg.pin) { store.del('kiosk_cfg'); location.reload(); }
+  }
+};
+
+/* ---- 員工資料 ---- */
+async function refreshStaff() {
+  try {
+    const data = await api('kioskData', cfg);
+    staff = data.staff; store.set('kiosk_staff', staff);
+    const drift = Math.abs(new Date(data.serverTime.replace(' ', 'T')) - new Date()) / 60000;
+    if (drift > 3) toast(`⚠️ 平板時間差咗 ${Math.round(drift)} 分鐘，請校正`, 'bad');
+  } catch (e) { console.warn(e); }
+  $('#staffInfo').textContent = `已登記 ${staff.length} 人`;
+}
+
+/* ---- 離線隊列 ---- */
+async function flushQueue() {
+  const q = store.get('punch_queue', []);
+  $('#netInfo').textContent = q.length ? `⏳ ${q.length} 筆待上傳` : (navigator.onLine ? '🟢 已連線' : '🔴 離線');
+  if (!q.length || !navigator.onLine) return;
+  const left = [];
+  for (const p of q) { try { await api('punch', p); } catch { left.push(p); } }
+  store.set('punch_queue', left);
+  $('#netInfo').textContent = left.length ? `⏳ ${left.length} 筆待上傳` : '🟢 已連線';
+}
+
+/* ---- 主迴圈 ---- */
+function setStatus(t) { $('#status').textContent = t; }
+
+async function loop() {
+  if (!paused) {
+    try {
+      const r = await Face.describe(video);
+      if (!r) {
+        $('#ring').classList.remove('seen'); streak = { id: null, n: 0 }; unknown = 0;
+        setStatus('請望住鏡頭打卡');
+      } else {
+        $('#ring').classList.add('seen');
+        const m = Face.match(r.descriptor, staff);
+        if (m.staff) {
+          unknown = 0;
+          streak = streak.id === m.staff.staff_id ? { id: streak.id, n: streak.n + 1 } : { id: m.staff.staff_id, n: 1 };
+          const cd = cooldown[m.staff.staff_id];
+          if (cd && Date.now() - cd < CONFIG.COOLDOWN_SEC * 1000) {
+            setStatus(`${m.staff.name}，你啱啱打咗卡 👍`);
+          } else if (streak.n >= CONFIG.CONFIRM_FRAMES) {
+            showConfirm(m.staff, m.distance);
+          } else setStatus('辨認緊…');
+        } else {
+          streak = { id: null, n: 0 };
+          setStatus(++unknown > 8 ? '認唔到你 🙁 請搵經理登記樣貌' : '辨認緊…');
+        }
+      }
+    } catch (e) { console.warn(e); }
+  }
+  setTimeout(loop, 250);
+}
+
+/* ---- 確認畫面 ---- */
+function showConfirm(s, distance) {
+  paused = true;
+  current = { staff: s, distance, photo: CONFIG.SAVE_PHOTO ? Face.snapshot(video) : '' };
+  $('#cName').textContent = s.name;
+  $('#cId').textContent = s.staff_id;
+  const last = (store.get('last_' + fmtDate(new Date()), {}))[s.staff_id];
+  const suggest = last === 'IN' ? 'OUT' : 'IN';
+  $$('#confirm [data-type]').forEach(b => b.classList.toggle('suggest', b.dataset.type === suggest));
+  $('#confirm').classList.remove('hidden');
+  const bar = $('#cBar'); bar.style.transition = 'none'; bar.style.width = '100%';
+  requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.transition = 'width 10s linear'; bar.style.width = '0%'; }));
+  clearTimeout(confirmTimer); confirmTimer = setTimeout(closeConfirm, 10000);
+}
+function closeConfirm() {
+  clearTimeout(confirmTimer);
+  $('#confirm').classList.add('hidden');
+  streak = { id: null, n: 0 }; current = null; paused = false;
+}
+$('#cCancel').onclick = closeConfirm;
+$$('#confirm [data-type]').forEach(b => b.onclick = () => punch(b.dataset.type));
+
+async function punch(type) {
+  if (!current) return;
+  const { staff: s, distance, photo } = current;
+  clearTimeout(confirmTimer);
+  $('#confirm').classList.add('hidden');
+  const rec = { shop_id: cfg.shop_id, pin: cfg.pin, staff_id: s.staff_id, type, score: distance.toFixed(3), photo,
+    client_time: new Date().toISOString(), device: navigator.userAgent.slice(0, 80) };
+  let ok = true, time = fmtTime(new Date());
+  try { const r = await api('punch', rec); time = r.time.slice(11, 16); }
+  catch (e) {
+    ok = false;
+    const q = store.get('punch_queue', []); q.push({ ...rec, offline: true }); store.set('punch_queue', q);
+  }
+  cooldown[s.staff_id] = Date.now();
+  const key = 'last_' + fmtDate(new Date()); const last = store.get(key, {}); last[s.staff_id] = type; store.set(key, last);
+  $('#dIcon').textContent = type === 'IN' ? '👋' : '🏠';
+  $('#dTitle').textContent = `${s.name} ${type === 'IN' ? '上班' : '下班'}打卡成功`;
+  $('#dSub').textContent = time + (ok ? '' : '（網絡斷咗，已暫存，會自動上傳）');
+  $('#done').classList.remove('hidden');
+  flushQueue();
+  setTimeout(() => { $('#done').classList.add('hidden'); current = null; streak = { id: null, n: 0 }; paused = false; }, 2500);
+}
+
+/* ---- 開機 ---- */
+async function keepAwake() {
+  try { await navigator.wakeLock?.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && keepAwake());
+
+async function start() {
+  $('#shopName').textContent = cfg.shop_name || cfg.shop_id;
+  try {
+    setStatus('載入人臉模型…');
+    await Face.load();
+    setStatus('開啟鏡頭…');
+    await Face.startCamera(video);
+  } catch (e) { setStatus('❌ ' + e.message); return; }
+  keepAwake();
+  await refreshStaff();
+  flushQueue();
+  setInterval(refreshStaff, 30 * 60 * 1000);
+  setInterval(flushQueue, 60 * 1000);
+  paused = false;
+  loop();
+}
+
+cfg ? start() : showSetup();
+</script>
+</body>
+</html>

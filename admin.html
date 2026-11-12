@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>打卡管理</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/common.js"></script>
+<script src="js/roster.js"></script>
+</head>
+<body>
+<div class="admin">
+
+  <!-- 登入 -->
+  <div id="login" class="card" style="max-width:380px;margin:12vh auto">
+    <h1>打卡管理後台</h1>
+    <label>管理員密碼</label>
+    <input id="pw" type="password" autocomplete="current-password">
+    <div style="margin-top:14px"><button id="loginBtn" style="width:100%">登入</button></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <header>
+      <h1>打卡管理後台</h1>
+      <div class="row"><a href="index.html" class="muted">打卡機頁面 →</a><button class="ghost" id="logout">登出</button></div>
+    </header>
+    <div class="tabs">
+      <button data-tab="report" class="on">📊 遲到報告</button>
+      <button data-tab="roster">🗓️ 匯入更表</button>
+      <button data-tab="staff">👤 員工 / 登記樣貌</button>
+      <button data-tab="shops">🏪 分店</button>
+    </div>
+
+    <!-- 報告 -->
+    <section id="tab-report" class="card">
+      <div class="row">
+        <div><label>由</label><input type="date" id="rFrom"></div>
+        <div><label>到</label><input type="date" id="rTo"></div>
+        <div><label>分店</label><select id="rShop"></select></div>
+        <div><label>遲到寬限（分鐘）</label><input type="number" id="rGrace" min="0" style="width:110px"></div>
+        <div style="align-self:flex-end"><button id="rRun">產生報告</button></div>
+      </div>
+      <div id="rOut"></div>
+    </section>
+
+    <!-- 更表 -->
+    <section id="tab-roster" class="card hidden">
+      <h3 style="margin-top:0">① 更份代號（可選）</h3>
+      <p class="muted">每行一個：<code>代號 開始 結束</code>，例如 <code>A 09:00 18:00</code>。更表入面寫 A 就會自動轉做 09:00-18:00。</p>
+      <textarea id="shiftCodes" style="min-height:90px"></textarea>
+      <div style="margin-top:8px"><button class="ghost" id="saveShifts">儲存更份代號</button></div>
+
+      <h3>② 匯入更表</h3>
+      <div class="row">
+        <div><label>分店</label><select id="impShop"></select></div>
+        <div><label>年份（日期冇寫年份時用）</label><input type="number" id="impYear" style="width:120px"></div>
+        <div class="grow"><label>或者揀 Excel / CSV 檔</label><input type="file" id="impFile" accept=".xlsx,.xls,.csv,.txt"></div>
+      </div>
+      <label>喺 Excel 揀晒成個更表（連第一行日期）→ 複製 → 貼喺度</label>
+      <textarea id="impText" placeholder="員工	1/11	2/11	3/11
+陳大文	A	OFF	09:30-18:30
+李小明	B	A	休"></textarea>
+      <details class="muted" style="margin:8px 0">
+        <summary>支援咩格式？</summary>
+        <p><b>格仔更表</b>：第一行係日期，第一欄係員工編號或姓名，格入面寫 <code>A</code> / <code>09:00-18:00</code> / <code>9-18</code> / <code>0930-1830</code> / <code>OFF</code> / <code>休</code>。有星期嗰行會自動跳過。通宵更（例如 22:00-07:00）都得。</p>
+        <p><b>清單</b>：第一行標題 <code>日期, 員工, 開始, 結束</code>（或 <code>日期, 員工, 更份</code>），可加 <code>分店</code> 欄。</p>
+        <p>同一日同一個員工再匯入會覆蓋舊更。</p>
+      </details>
+      <button id="impParse">預覽</button>
+      <div id="impOut"></div>
+    </section>
+
+    <!-- 員工 -->
+    <section id="tab-staff" class="card hidden">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">員工</h3><button id="addStaff">＋ 新增員工</button>
+      </div>
+      <p class="muted">新增員工之後撳「登記樣貌」，用呢部機鏡頭影 5 下（建議用打卡嗰部平板做）。</p>
+      <div class="tbl-wrap" id="staffTbl"></div>
+    </section>
+
+    <!-- 分店 -->
+    <section id="tab-shops" class="card hidden">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">分店</h3><button id="addShop">＋ 新增分店</button>
+      </div>
+      <p class="muted">每間分店有自己嘅 PIN，平板第一次開要揀分店 + 入 PIN。</p>
+      <div class="tbl-wrap" id="shopTbl"></div>
+    </section>
+  </div>
+</div>
+
+<!-- 編輯 modal -->
+<div class="modal hidden" id="modal"><div class="card" id="modalBody"></div></div>
+
+<script src="js/admin.js"></script>
+</body>
+</html>
