@@ -63,6 +63,22 @@ const Face = {
       .withFaceDescriptor();
     return r || null;
   },
+  // 相片檔 → 特徵；大相先縮細（手機相太大會好慢）
+  async describeFile(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => bad(new Error('讀唔到相')); i.src = url; });
+      const scale = Math.min(1, 800 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const r = await faceapi
+        .detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.4 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      return r || null;
+    } finally { URL.revokeObjectURL(url); }
+  },
   // staff: [{staff_id, name, face: [[128], ...]}]
   match(descriptor, staff) {
     let best = null, bestD = Infinity;

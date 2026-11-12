@@ -110,21 +110,23 @@ async function enroll(id) {
   $('#ePhotos').onchange = async e => {
     usePhotos = true; Face.stopCamera(v);
     const files = [...e.target.files]; const faces = []; let bad = 0;
-    $('#eMsg').textContent = `分析緊 ${files.length} 張相…`;
-    await Face.load();
-    for (const f of files) {
-      const img = await faceapi.bufferToImage(f);
-      const r = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
-        .withFaceLandmarks().withFaceDescriptor().catch(() => null);
-      if (r) faces.push(Array.from(r.descriptor).map(x => Math.round(x * 1e4) / 1e4)); else bad++;
-    }
+    try {
+      $('#eMsg').textContent = '載入人臉模型…';
+      await Face.load();
+      for (const [i, f] of files.entries()) {
+        $('#eMsg').textContent = `分析緊第 ${i + 1} / ${files.length} 張相…`;
+        let r = null;
+        try { r = await Face.describeFile(f); } catch (err) { console.warn(err); }
+        if (r) faces.push(Array.from(r.descriptor).map(x => Math.round(x * 1e4) / 1e4)); else bad++;
+      }
+    } catch (err) { $('#eMsg').textContent = '❌ ' + err.message; return; }
     if (!faces.length) { $('#eMsg').textContent = '❌ 張張相都搵唔到面，請換清楚啲嘅正面相'; return; }
     $('#eMsg').textContent = `儲存緊 ${faces.length} 張${bad ? `（${bad} 張搵唔到面，已略過）` : ''}…`;
     try { await A('saveFace', { staff_id: id, face: faces }); toast(`${s.name} 樣貌登記完成（${faces.length} 張相）`, 'ok'); closeModal(); reload(); }
     catch (err) { $('#eMsg').textContent = '❌ ' + err.message; }
   };
-  try { await Face.load(); if (!usePhotos) await Face.startCamera(v); } catch (e) { $('#eMsg').textContent = '❌ 開唔到鏡頭：' + e.message + '（可以改用上載相片）'; return; }
-  if (usePhotos) return;
+  try { await Face.load(); if (!usePhotos) await Face.startCamera(v); } catch (e) { if (!usePhotos) $('#eMsg').textContent = '❌ 開唔到鏡頭：' + e.message + '（可以改用上載相片）'; return; }
+  if (usePhotos) { Face.stopCamera(v); return; }
   const got = [];
   $('#eMsg').textContent = '影緊…';
   while (got.length < SAMPLES && $('#eVideo') === v && !usePhotos) {
