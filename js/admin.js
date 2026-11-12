@@ -159,6 +159,68 @@ $('#saveShifts').onclick = async () => {
 
 /* ===== 匯入更表 ===== */
 $('#impYear').value = new Date().getFullYear();
+
+// 範本預設下個月（通常提早排更）
+{ const t = new Date(); const n = new Date(t.getFullYear(), t.getMonth() + 1, 1); $('#tplMonth').value = `${n.getFullYear()}-${pad(n.getMonth() + 1)}`; }
+
+$('#tplBtn').onclick = () => {
+  const [y, m] = $('#tplMonth').value.split('-').map(Number);
+  if (!y || !m) return toast('請揀月份', 'bad');
+  const shopId = $('#impShop').value;
+  const days = new Date(y, m, 0).getDate();
+  const WD = ['日', '一', '二', '三', '四', '五', '六'];
+  const dates = [...Array(days)].map((_, i) => new Date(y, m - 1, i + 1));
+  const codes = DB.shifts.map(s => s.code);
+  const c1 = codes[0] || '09:00-18:00', c2 = codes[1] || '13:00-22:00';
+
+  let people = DB.staff.filter(s => s.shop_id === shopId && s.active !== 'N');
+  const demo = !people.length;
+  if (demo) people = [{ staff_id: 'E001', name: '陳大文' }, { staff_id: 'E002', name: '李小明' }];
+
+  // 頭兩個員工填示範更，其他留空俾佢哋填
+  const sample = (r, d) => {
+    if (r > 1) return '';
+    const wd = d.getDay();
+    if (r === 0) return wd === 0 ? 'OFF' : wd === 3 ? '09:30-18:30' : c1;
+    return wd === 2 ? '休' : wd === 6 ? c1 : c2;
+  };
+  const aoa = [
+    ['員工編號', '姓名', ...dates.map(d => `${d.getDate()}/${m}/${y}`)],
+    ['', '星期', ...dates.map(d => WD[d.getDay()])],
+    ...people.map((p, r) => [p.staff_id, p.name, ...dates.map(d => sample(r, d))]),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 10 }, { wch: 10 }, ...dates.map(() => ({ wch: 11 }))];
+  ws['!freeze'] = { xSplit: 2, ySplit: 2 };
+
+  const help = [
+    ['點樣填更表'],
+    [''],
+    ['1. 第一行係日期，唔好改；第二行星期會自動略過'],
+    ['2. 第一、二欄係員工編號同姓名（要同系統一樣），可以加減員工行'],
+    ['3. 每格填一個更份，寫法如下：'],
+    [''],
+    ['寫法', '意思'],
+    ...DB.shifts.map(s => [s.code, `${s.start} - ${s.end}（更份代號）`]),
+    ['09:00-18:00', '直接寫時間'],
+    ['9-18', '簡寫都得'],
+    ['0930-1830', '冇冒號都得'],
+    ['22:00-07:00', '通宵更（過咗午夜）'],
+    ['OFF / 休 / AL / SL / PH', '放假（唔計）'],
+    ['（空白）', '冇返工'],
+    [''],
+    ['4. 填好之後：管理後台 → 匯入更表 → 揀返呢個檔 → 預覽 → 確認匯入'],
+    ['5. 同一日同一個員工再匯入，會覆蓋舊更'],
+    ...(demo ? [[''], ['⚠️ 呢間分店仲未有員工，範本用咗示範名字，請先喺「員工」頁加員工']] : []),
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(help);
+  ws2['!cols'] = [{ wch: 26 }, { wch: 40 }];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '更表');
+  XLSX.utils.book_append_sheet(wb, ws2, '說明');
+  XLSX.writeFile(wb, `更表範本_${shopName(shopId)}_${y}-${pad(m)}.xlsx`);
+};
 let fileGrid = null;
 $('#impFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
