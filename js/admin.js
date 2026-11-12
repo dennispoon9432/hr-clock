@@ -9,12 +9,15 @@ const shopName = id => (DB.shops.find(s => s.shop_id === id) || {}).name || id;
 /* ===== 登入 ===== */
 async function login(pw) {
   PW = pw;
-  await A('adminLogin');
-  try { sessionStorage.setItem('hr_pw', pw); } catch {}
-  $('#login').classList.add('hidden');
-  $('#app').classList.remove('hidden');
-  await reload();
-  initReport();
+  const btn = $('#loginBtn');
+  btn.disabled = true; btn.textContent = '登入中…';
+  try {
+    await reload(); // 密碼錯會喺度 throw
+    try { sessionStorage.setItem('hr_pw', pw); } catch {}
+    $('#login').classList.add('hidden');
+    $('#app').classList.remove('hidden');
+    initReport();
+  } finally { btn.disabled = false; btn.textContent = '登入'; }
 }
 $('#loginBtn').onclick = () => login($('#pw').value).catch(e => toast(e.message, 'bad'));
 $('#pw').onkeydown = e => { if (e.key === 'Enter') $('#loginBtn').click(); };
