@@ -23,7 +23,8 @@
   </div>
   <div>
     <div class="status" id="status">載入中…</div>
-    <div class="kiosk-foot"><span id="netInfo"></span><span id="staffInfo"></span></div>
+    <div class="kiosk-foot"><span id="netInfo"></span>
+      <span class="row"><span id="staffInfo"></span><button class="kiosk-btn" id="switchShop">🏪 轉換分店</button></span></div>
   </div>
 </div>
 
@@ -35,6 +36,19 @@
     <label>分店</label><select id="setupShop"><option>載入中…</option></select>
     <label>分店 PIN</label><input id="setupPin" type="password" inputmode="numeric">
     <div style="margin-top:18px"><button id="setupBtn" style="width:100%;padding:16px">確定</button></div>
+    <div style="margin-top:10px" class="hidden" id="setupCancelWrap"><button class="ghost" id="setupCancel" style="width:100%;padding:14px">取消，留返喺目前分店</button></div>
+  </div>
+</div>
+
+<!-- 轉換分店：先驗證目前分店 PIN -->
+<div class="overlay hidden" id="pinBox">
+  <div class="confirm" style="text-align:left">
+    <h2 style="font-size:28px">轉換分店</h2>
+    <p class="muted">請輸入目前分店（<b id="pbShop"></b>）嘅 PIN</p>
+    <input id="pbPin" type="password" inputmode="numeric" autocomplete="off">
+    <p id="pbErr" style="color:var(--bad);min-height:20px;margin:8px 0 0"></p>
+    <div class="row" style="margin-top:10px"><button id="pbOk" class="grow" style="padding:16px">確定</button>
+      <button class="ghost grow" id="pbCancel" style="padding:16px">取消</button></div>
   </div>
 </div>
 
@@ -76,37 +90,60 @@ function tickClock() {
 }
 setInterval(tickClock, 1000); tickClock();
 
-/* ---- 首次設定 ---- */
-async function showSetup() {
+/* ---- 設定 / 轉換分店 ---- */
+let started = false;
+async function showSetup(switching = false) {
+  $('#setupPin').value = '';
+  $('#setupCancelWrap').classList.toggle('hidden', !switching);
   $('#setup').classList.remove('hidden');
   try {
     const shops = await api('shops');
-    $('#setupShop').innerHTML = shops.map(s => `<option value="${esc(s.shop_id)}">${esc(s.name)} (${esc(s.shop_id)})</option>`).join('');
+    $('#setupShop').innerHTML = shops.map(s => `<option value="${esc(s.shop_id)}" ${cfg && s.shop_id === cfg.shop_id ? 'selected' : ''}>${esc(s.name)} (${esc(s.shop_id)})</option>`).join('');
   } catch (e) { toast('連唔到伺服器：' + e.message, 'bad'); }
 }
 $('#setupBtn').onclick = async () => {
   const sel = $('#setupShop');
   const c = { shop_id: sel.value, pin: $('#setupPin').value, shop_name: sel.selectedOptions[0]?.text.replace(/\s*\(.*\)$/, '') };
   try {
-    $('#setupBtn').disabled = true;
+    $('#setupBtn').disabled = true; $('#setupBtn').textContent = '檢查緊…';
     const data = await api('kioskData', c);
     cfg = c; store.set('kiosk_cfg', c);
     staff = data.staff; store.set('kiosk_staff', staff);
+    cooldown = {};
     $('#setup').classList.add('hidden');
-    start();
+    if (started) {
+      $('#shopName').textContent = cfg.shop_name || cfg.shop_id;
+      $('#staffInfo').textContent = `已登記 ${staff.length} 人`;
+      toast(`已轉換到 ${cfg.shop_name}`, 'ok');
+      streak = { id: null, n: 0 }; paused = false;
+    } else start();
   } catch (e) { toast(e.message, 'bad'); }
-  finally { $('#setupBtn').disabled = false; }
+  finally { $('#setupBtn').disabled = false; $('#setupBtn').textContent = '確定'; }
 };
+$('#setupCancel').onclick = () => { $('#setup').classList.add('hidden'); streak = { id: null, n: 0 }; paused = false; };
 
-// 喺分店名連按 5 下可以重設
-let taps = 0, tapT;
-$('#shopName').onclick = () => {
-  taps++; clearTimeout(tapT); tapT = setTimeout(() => taps = 0, 1500);
-  if (taps >= 5) {
-    taps = 0;
-    const p = prompt('輸入分店 PIN 重設平板');
-    if (p && cfg && p === cfg.pin) { store.del('kiosk_cfg'); location.reload(); }
+$('#switchShop').onclick = () => {
+  if (!cfg) return;
+  paused = true;
+  $('#pbShop').textContent = cfg.shop_name || cfg.shop_id;
+  $('#pbPin').value = ''; $('#pbErr').textContent = '';
+  $('#pinBox').classList.remove('hidden');
+  setTimeout(() => $('#pbPin').focus(), 50);
+};
+$('#pbCancel').onclick = () => { $('#pinBox').classList.add('hidden'); paused = false; };
+$('#pbPin').onkeydown = e => { if (e.key === 'Enter') $('#pbOk').click(); };
+$('#pbOk').onclick = async () => {
+  const pin = $('#pbPin').value.trim();
+  let ok = pin && pin === String(cfg.pin);
+  if (!ok && pin && navigator.onLine) {
+    // 管理員可能改咗 PIN，問返伺服器
+    $('#pbOk').disabled = true;
+    try { await api('kioskData', { shop_id: cfg.shop_id, pin }); ok = true; } catch {}
+    $('#pbOk').disabled = false;
   }
+  if (!ok) { $('#pbErr').textContent = 'PIN 唔啱'; $('#pbPin').value = ''; return; }
+  $('#pinBox').classList.add('hidden');
+  showSetup(true);
 };
 
 /* ---- 員工資料 ---- */
@@ -215,6 +252,7 @@ async function keepAwake() {
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && keepAwake());
 
 async function start() {
+  started = true;
   $('#shopName').textContent = cfg.shop_name || cfg.shop_id;
   try {
     setStatus('載入人臉模型…');
